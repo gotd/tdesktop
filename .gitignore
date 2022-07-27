@@ -50,3 +50,7 @@ stage
 *.*~
 .idea/
 cmake-build-debug/
+
+
+build.sh
+build*.sh
