@@ -23,10 +23,33 @@
 #                       (default: OFF; newer GCC warns on upstream code)
 #   PACKAGE            1 (default) to create dist/<name>.tar.gz + .sha256
 #   DIST_NAME           package name (default: teled-<version>-<short sha>)
+#   TELED_BUILD_ENV     file with defaults for the variables above, one
+#                       NAME=value per line, # comments allowed; variables
+#                       already set in the environment win
+#                       (default: ~/.config/teled/build.env, if it exists)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$ROOT"
+
+TELED_BUILD_ENV=${TELED_BUILD_ENV:-$HOME/.config/teled/build.env}
+if [ -f "$TELED_BUILD_ENV" ]; then
+	while IFS= read -r line || [ -n "$line" ]; do
+		line=${line%%#*}
+		line=$(echo "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		[ -z "$line" ] && continue
+		name=${line%%=*}
+		value=${line#*=}
+		if [[ ! $name =~ ^[A-Z_][A-Z0-9_]*$ ]] || [ "$name" = "$line" ]; then
+			echo "teled-build: $TELED_BUILD_ENV: bad line '$line'" >&2
+			exit 2
+		fi
+		if [ -z "${!name+x}" ]; then
+			export "$name=$value"
+		fi
+	done < "$TELED_BUILD_ENV"
+	echo "teled-build: defaults from $TELED_BUILD_ENV" >&2
+fi
 
 TELED_SERVER=${TELED_SERVER:-127.0.0.1:10443,[::1]:10443}
 TELED_RSA_KEY_FILE=${TELED_RSA_KEY_FILE:-Telegram/SourceFiles/mtproto/teled/teled_test_public_key.pem}

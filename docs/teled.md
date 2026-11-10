@@ -159,6 +159,7 @@ scripts/teled/build-linux.sh
   | `BUILD_CONFIG` | `Release` | `Release` or `Debug`. |
   | `CCACHE_DIR` | `~/.cache/tdesktop-ccache` | Host ccache directory to mount; empty disables ccache. |
   | `WARNINGS_AS_ERRORS` | `OFF` | `ON` fails the build on compiler warnings, like upstream CI. |
+  | `TELED_BUILD_ENV` | `~/.config/teled/build.env` | File with your defaults for these variables, one `NAME=value` per line; variables set in the environment win. |
   | `TDESKTOP_API_ID`, `TDESKTOP_API_HASH` | upstream test credentials | api credentials. |
 
   Extra arguments go to cmake, for example `-D DESKTOP_APP_USE_PACKAGED=OFF`.
