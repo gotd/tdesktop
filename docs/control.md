@@ -40,9 +40,9 @@ exist, so notifications, the tray icon, portals and the secret service never rea
 bus doesn't have; with no bus at all the window is up in about 0.5 s.)
 
 ```console
-# teled on a local port; without --postgres-uri most RPCs answer NOT_IMPLEMENTED
+# teled on a local port (teled >= fix/tdesktop-compat: layer 233, in-memory DB by default;
+# add --postgres-uri for persistence)
 teled --key _testdata/test.key.pem --host 127.0.0.1 --port 18443 \
-  --postgres-uri 'postgres://teled:teled@<db host>:5432/teled?sslmode=disable' \
   --object-store-dir /tmp/teled-objects
 
 # client: fresh working dir, local teled only, control socket
@@ -264,6 +264,7 @@ $ tdctl shot -o after.png
 0/1/1/0/4/0 Ui::RoundButton [259,395,300,42] button "Next"
 ```
 
-Everything up to "Sign Up" was run headless against teled. With the teled checkout used for this,
-`auth.signUp` succeeds on the server but the client fails to parse its `auth.authorization`
-(`CLIENT_RESPONSE_PARSE_FAILED` in `log.txt`), so the logged-in steps are not verified yet.
+This flow was run headless against teled. With teled `fix/tdesktop-compat` (layer 233) the client
+also gets past sign-up: chat list, Saved Messages, sending and history paging, global search,
+BotFather and a two-client DM were driven with tdctl. Older teled (layer 228) makes the client fail
+`users.getFullUser` with `CLIENT_RESPONSE_PARSE_FAILED`.
