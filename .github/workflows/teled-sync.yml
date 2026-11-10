@@ -1,0 +1,117 @@
+# gotd/tdesktop fork: rebase the teled commits (upstream/dev..dev) onto the
+# latest telegramdesktop/tdesktop dev and force-push dev, which triggers
+# teled.yml. On a conflict, open or update an issue labeled teled-sync.
+#
+# Needs secret TELED_SYNC_TOKEN, a PAT with contents and workflows write
+# access (classic: repo + workflow scopes): upstream commits change
+# .github/workflows/*, which GITHUB_TOKEN may not push, and pushes made with
+# GITHUB_TOKEN do not trigger teled.yml. See docs/teled.md.
+name: teled sync.
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push the rebased dev.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: teled-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Rebase onto upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      LABEL: teled-sync
+      GH_REPO: ${{ github.repository }}
+      HAS_TOKEN: ${{ secrets.TELED_SYNC_TOKEN != '' }}
+
+    steps:
+      - name: Check token.
+        if: env.HAS_TOKEN != 'true'
+        run: |
+          echo "::error::Secret TELED_SYNC_TOKEN is not set, see docs/teled.md."
+          exit 1
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ secrets.TELED_SYNC_TOKEN }}
+
+      - name: Rebase.
+        id: sync
+        env:
+          PUSH: ${{ github.event_name == 'schedule' || inputs.push }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$PUSH" = true ]; then
+            scripts/teled/sync.sh --push
+          else
+            scripts/teled/sync.sh
+          fi
+
+      - name: Report conflict.
+        if: failure() && steps.sync.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ steps.sync.outputs.old }}
+          UPSTREAM: ${{ steps.sync.outputs.upstream }}
+          COMMIT: ${{ steps.sync.outputs.conflict_commit }}
+          FILES: ${{ steps.sync.outputs.conflict_files }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          {
+            echo "Rebasing the teled commits of \`dev\` onto upstream \`dev\` failed."
+            echo
+            echo "- fork dev: $OLD"
+            echo "- upstream dev: telegramdesktop/tdesktop@$UPSTREAM"
+            echo "- conflicting commit: $COMMIT"
+            echo "- run: $run_url"
+            echo
+            echo "Conflicting files:"
+            echo
+            while IFS= read -r file; do
+              [ -n "$file" ] && echo "- \`$file\`"
+            done <<< "$FILES"
+            echo
+            echo "Resolve locally: \`scripts/teled/sync.sh\`, fix the conflicts with"
+            echo "\`git rebase --onto teled-upstream/dev \$(git merge-base origin/dev teled-upstream/dev)\`,"
+            echo "then \`git push --force-with-lease=refs/heads/dev:$OLD origin HEAD:dev\`."
+          } > "$RUNNER_TEMP/body.md"
+          gh label create "$LABEL" --color d93f0b \
+            --description "Automatic upstream rebase of the teled fork" --force
+          issue=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number')
+          if [ -n "$issue" ]; then
+            gh issue edit "$issue" --body-file "$RUNNER_TEMP/body.md"
+            gh issue comment "$issue" --body "Still conflicting with upstream $UPSTREAM: $run_url"
+          else
+            gh issue create --label "$LABEL" \
+              --title "teled sync: rebase onto upstream dev conflicts" \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Close conflict issue.
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.sync.outputs.status }}
+          NEW: ${{ steps.sync.outputs.new }}
+        run: |
+          issue=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number' || true)
+          if [ -n "$issue" ] && [ "$STATUS" != rebased ]; then
+            gh issue close "$issue" --comment "Resolved, dev is $STATUS at $NEW."
+          fi
