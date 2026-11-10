@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "base/options.h"
 #include "mtproto/session_private.h"
+#include "trace/trace.h"
 
 #include "core/version.h"
 #include "mtproto/details/mtproto_bound_key_creator.h"
@@ -1343,6 +1344,16 @@ void SessionPrivate::handleReceived() {
 			return restart();
 		}
 
+		MTP_WT(Message(
+			::Trace::Dir::In,
+			_shiftedDcId,
+			getProtocolDcId(),
+			_encryptionKey,
+			_connection->tag(),
+			decryptedInts,
+			decryptedInts
+				+ kEncryptedHeaderIntsCount
+				+ messageLength / kIntSize));
 		if (Logs::DebugEnabled()) {
 			_connection->logInfo(u"Decrypted message %1,%2,%3 is %4 len"_q
 				.arg(msgId)
@@ -2726,6 +2737,14 @@ bool SessionPrivate::sendSecureRequest(
 
 	memcpy(request->data() + 0, &_sessionSalt, 2 * sizeof(mtpPrime));
 	memcpy(request->data() + 2, &_sessionId, 2 * sizeof(mtpPrime));
+	MTP_WT(Message(
+		::Trace::Dir::Out,
+		_shiftedDcId,
+		getProtocolDcId(),
+		_encryptionKey,
+		_connection->tag(),
+		request->constData(),
+		request->constData() + 4 + messageSize));
 
 	auto from = request->constData() + 4;
 	MTP_LOG(_shiftedDcId, ("Send: ")
