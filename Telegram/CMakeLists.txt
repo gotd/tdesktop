@@ -2886,10 +2886,17 @@ target_include_directories(Telegram PRIVATE ${src_loc})
 
 target_compile_definitions(Telegram
 PRIVATE
-    TDESKTOP_API_ID=${TDESKTOP_API_ID}
-    TDESKTOP_API_HASH=${TDESKTOP_API_HASH}
     G_LOG_DOMAIN="Telegram"
 )
+
+# api_id / api_hash live in one generated source instead of the target
+# compile definitions, so changing them rebuilds one file, not all of them.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/api_credentials.cpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/gen/api_credentials.cpp
+    @ONLY
+)
+target_sources(Telegram PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen/api_credentials.cpp)
 
 get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if (APPLE
