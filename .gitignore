@@ -83,3 +83,4 @@ build*.sh
 # teled build outputs (scripts/teled/build-linux.sh)
 /.teled/
 /dist/
+/.production/
