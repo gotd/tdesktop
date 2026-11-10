@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "trace/trace_ids.h"
 #include "trace/trace_redact.h"
+#include "trace/trace_ui_core.h"
 #include "trace/trace_writer.h"
 #include "core/version.h"
 #include "mtproto/details/mtproto_serialized_request.h"
@@ -33,7 +34,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 //                              with TDESKTOP_TRACE_DEFAULT=ON)
 //   TDESKTOP_TRACE=1|on        enable, default directory
 //   TDESKTOP_TRACE=<dir>       enable, write runs under <dir>
-//   TDESKTOP_TRACE_FLAGS=storage_bodies,inline
+//   TDESKTOP_TRACE_FLAGS=storage_bodies,inline,noui,ui_raw_ids,ui_verbose
+//   TDESKTOP_TRACE_UI_WINDOW=<ms>  "after" stamp window (default 3000)
 //   TDESKTOP_TRACE_MAX=<bytes>[K|M|G]  total size cap (default 2G)
 //   command line: -notrace / -trace
 // Default directory: <working dir>/trace/<UTC timestamp>-<pid>/.
@@ -59,6 +61,7 @@ struct Config {
 	std::string directory;
 	uint64_t totalBytes = 2ULL * 1024 * 1024 * 1024;
 	bool inlineBodies = false;
+	double uiAfterMs = 3000.;
 };
 
 Config &Cfg() {
@@ -101,6 +104,7 @@ Writer &W() {
 
 uint32_t InitialFlags() {
 	auto result = TDESKTOP_TRACE_DEFAULT_ON ? uint32_t(kOn) : uint32_t(0);
+	result |= kUi;
 	auto &config = Cfg();
 	const auto env = std::getenv("TDESKTOP_TRACE");
 	if (env && *env) {
@@ -123,12 +127,24 @@ uint32_t InitialFlags() {
 			result |= kStorageBodies;
 		} else if (flag == "inline") {
 			config.inlineBodies = true;
+		} else if (flag == "noui") {
+			result &= ~uint32_t(kUi);
+		} else if (flag == "ui_raw_ids") {
+			result |= kUiRawIds;
+		} else if (flag == "ui_verbose") {
+			result |= kUiVerbose;
 		}
 		from = till + 1;
 	}
 	config.totalBytes = ParseSize(
 		std::getenv("TDESKTOP_TRACE_MAX"),
 		config.totalBytes);
+	if (const auto window = std::getenv("TDESKTOP_TRACE_UI_WINDOW")) {
+		const auto ms = std::strtoull(window, nullptr, 10);
+		if (ms > 0 && ms <= 600000) {
+			config.uiAfterMs = double(ms);
+		}
+	}
 	return result;
 }
 
@@ -158,6 +174,7 @@ thread_local auto CurrentFileName = QString();
 thread_local auto InsideWriteEncrypted = false;
 
 QString WorkingDir;
+QString RunDir;
 
 std::mutex RedactionsMutex;
 ResponseRedactions Redactions;
@@ -171,7 +188,7 @@ std::unordered_map<int32_t, Pending> PendingRequests;
 
 class Fields final {
 public:
-	explicit Fields(const char *event) {
+	explicit Fields(const char *event) : _stampable(Stampable(event)) {
 		_data.reserve(256);
 		_data += ",\"ev\":\"";
 		_data += event;
@@ -270,13 +287,36 @@ public:
 	[[nodiscard]] std::string take() {
 		return std::move(_data);
 	}
+	[[nodiscard]] bool stampable() const {
+		return _stampable;
+	}
+	// Main thread, no cause: the UI action stamp (P14).
+	void stamp() {
+		if (On(kOn | kUi)
+			&& !CurrentCause.set
+			&& std::this_thread::get_id() == kMainThread) {
+			UiCore::MainClock().append(_data, Writer::Now());
+		}
+	}
 
 private:
+	// Requests and storage get the UI stamp (ui.* records have their own).
+	[[nodiscard]] static bool Stampable(const char *event) {
+		return !std::strcmp(event, "req.new")
+			|| !std::strcmp(event, "req.caller")
+			|| !std::strcmp(event, "req.cancel")
+			|| !std::strncmp(event, "st.", 3);
+	}
+
 	std::string _data;
+	bool _stampable = false;
 
 };
 
 void Emit(Fields &fields, std::string *blob = nullptr) {
+	if (fields.stampable()) {
+		fields.stamp();
+	}
 	if (CurrentCause.set) {
 		fields.key("cause");
 		fields.raw("{\"req\":");
@@ -510,6 +550,12 @@ void Start(const QString &workingDir, const QList<QString> &arguments) {
 	header.key("flags").raw(On(kStorageBodies)
 		? "[\"storage_bodies\"]"
 		: "[]");
+	if (On(kUi)) {
+		header.key("ui").raw(On(kUiRawIds)
+			? "{\"v\":1,\"ids\":\"raw\",\"raw_ids\":true"
+			: "{\"v\":1,\"ids\":\"hmac64\",\"raw_ids\":false");
+		header.raw(On(kUiVerbose) ? ",\"verbose\":true}" : "}");
+	}
 	// Drop the leading ,"ev":"hdr": the writer writes its own.
 	auto headerFields = header.take();
 	headerFields.erase(0, std::strlen(",\"ev\":\"hdr\""));
@@ -525,6 +571,7 @@ void Start(const QString &workingDir, const QList<QString> &arguments) {
 	options.totalBytes = config.totalBytes;
 	options.inlineMax = config.inlineBodies ? 1024 : 0;
 
+	const auto runPath = options.directory;
 	auto error = std::string();
 	if (!W().start(std::move(options), error)) {
 		Flags = 0;
@@ -534,6 +581,23 @@ void Start(const QString &workingDir, const QList<QString> &arguments) {
 		return;
 	}
 	std::atexit([] { W().stop(); });
+	RunDir = directory;
+	if (On(kUi)) {
+		auto clock = UiCore::StampOptions();
+		clock.afterMs = config.uiAfterMs;
+		UiCore::MainClock().setOptions(clock);
+		UiCore::Ids().setRaw(On(kUiRawIds));
+		if (!On(kUiRawIds)) {
+			unsigned char key[UiCore::kIdKeySize];
+			UiCore::GenerateKey(key, sizeof(key));
+			UiCore::Ids().setKey(key, sizeof(key));
+			if (!UiCore::WriteKeyFile(runPath, key, sizeof(key), error)) {
+				LOG(("Trace Error: %1, UI ids can not be joined offline."
+					).arg(QString::fromStdString(error)));
+			}
+			std::memset(key, 0, sizeof(key));
+		}
+	}
 	LOG(("Trace: writing wire and storage trace to %1 "
 		"(disable with TDESKTOP_TRACE=0 or -notrace)").arg(directory));
 }
@@ -867,6 +931,34 @@ WriteEncryptedScope::~WriteEncryptedScope() {
 
 bool InWriteEncrypted() {
 	return InsideWriteEncrypted;
+}
+
+void UiRecord(const char *kind, const std::string &fields, UiStampMode mode) {
+	auto record = Fields(kind);
+	const auto now = Writer::Now();
+	auto &clock = UiCore::MainClock();
+	auto stamp = (mode != UiStampMode::None && !CurrentCause.set)
+		? clock.compute(now)
+		: std::nullopt;
+	if (mode == UiStampMode::StampOrApp && !stamp) {
+		const auto a = UiCore::NextAction();
+		record.num("a", a);
+		record.str("src", std::string_view("app"));
+		if (!CurrentCause.set) {
+			clock.mark(a, now);
+		}
+	}
+	record.raw(fields);
+	if (stamp) {
+		auto appended = std::string();
+		UiCore::AppendStamp(appended, *stamp);
+		record.raw(appended);
+	}
+	Emit(record);
+}
+
+const QString &RunDirectory() {
+	return RunDir;
 }
 
 } // namespace Trace

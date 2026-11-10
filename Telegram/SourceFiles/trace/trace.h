@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <memory>
 #include <optional>
 #include <source_location>
+#include <string>
 #include <type_traits>
 
 class QString;
@@ -46,6 +47,9 @@ enum Flag : uint32_t {
 	kOn = 1U << 0,
 	kStorageBodies = 1U << 6,
 	kInline = 1U << 8,
+	kUi = 1U << 9, // UI and user-action tracing (P14), off with "noui".
+	kUiRawIds = 1U << 10, // "ui_raw_ids": raw ids instead of "h:<hmac>".
+	kUiVerbose = 1U << 11, // "ui_verbose": positions, sizes, exact counts.
 };
 
 extern std::atomic<uint32_t> Flags;
@@ -233,6 +237,17 @@ private:
 };
 [[nodiscard]] bool InWriteEncrypted();
 
+// UI records (trace/trace_ui.cpp), main thread only.
+enum class UiStampMode : unsigned char {
+	None, // Input records: they define the action.
+	Stamp, // "ui":{a,rel,dt} when inside or shortly after an action.
+	StampOrApp, // The same, else a new synthetic "a" with "src":"app".
+};
+// fields: ",\"k\":v..." of the record.
+void UiRecord(const char *kind, const std::string &fields, UiStampMode mode);
+// The run directory, empty when not tracing.
+[[nodiscard]] const QString &RunDirectory();
+
 } // namespace Trace
 
 #ifdef TDESKTOP_WIRE_TRACE
@@ -252,10 +267,24 @@ private:
 #define MTP_WT_LOC_DEF , std::source_location wtLoc
 // Passes the captured location on.
 #define MTP_WT_PASS , wtLoc
+// UI tracing hooks, see trace/trace_ui.h (include it at the hook site).
+#define MTP_WT_UI(call) do { \
+	if (::Trace::On(::Trace::kOn | ::Trace::kUi)) { \
+		::Trace::Ui::call; \
+	} \
+} while (false)
+#define MTP_WT_UI_SCOPE(name, receiver, event) \
+	auto name = std::optional<::Trace::Ui::InputScope>(); \
+	if (::Trace::On(::Trace::kOn | ::Trace::kUi) \
+		&& ::Trace::Ui::Observed((event)->type())) { \
+		name.emplace((receiver), (event)); \
+	}
 #else // TDESKTOP_WIRE_TRACE
 #define MTP_WT(call) do {} while (false)
 #define MTP_WT_SCOPE(name, response)
 #define MTP_WT_LOC
 #define MTP_WT_LOC_DEF
 #define MTP_WT_PASS
+#define MTP_WT_UI(call) do {} while (false)
+#define MTP_WT_UI_SCOPE(name, receiver, event)
 #endif // TDESKTOP_WIRE_TRACE
