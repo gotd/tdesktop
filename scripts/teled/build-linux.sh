@@ -27,8 +27,10 @@
 #                       Telegram instead of the teled client: no teled
 #                       servers or keys; needs your own TDESKTOP_API_ID and
 #                       TDESKTOP_API_HASH (https://my.telegram.org)
-#   PRODUCTION_REF      upstream commit or tag to build
-#                       (default: the upstream commit this fork is based on)
+#   PRODUCTION_REF      commit, tag or branch to build
+#                       (default: upstream plus the fork's non-teled commits,
+#                       i.e. tracing: the parent of the first commit after
+#                       upstream whose subject mentions teled)
 #   PRODUCTION_DIR      git worktree for the production source
 #                       (default: .production in this repo)
 #   TELED_BUILD_ENV     file with defaults for the variables above, one
@@ -92,11 +94,20 @@ if [ "$PRODUCTION" = 1 ]; then
 		exit 2
 	fi
 	if [ -z "${PRODUCTION_REF:-}" ]; then
-		if ! PRODUCTION_REF=$(git merge-base HEAD upstream/dev 2>/dev/null); then
+		if ! base=$(git merge-base HEAD upstream/dev 2>/dev/null); then
 			log "set PRODUCTION_REF or add the upstream remote:"
 			log "  git remote add upstream https://github.com/telegramdesktop/tdesktop.git && git fetch upstream"
 			exit 1
 		fi
+		# Fork commits are ordered: non-teled ones (tracing) first, then
+		# the teled ones. Build everything below the first teled commit.
+		PRODUCTION_REF=$base
+		while read -r commit subject; do
+			if [[ ${subject,,} == *teled* ]]; then
+				break
+			fi
+			PRODUCTION_REF=$commit
+		done < <(git log --reverse --topo-order --format='%H %s' "$base..HEAD")
 	fi
 	ref=$(git rev-parse --verify "$PRODUCTION_REF^{commit}")
 	if [ ! -e "$PRODUCTION_DIR/.git" ]; then

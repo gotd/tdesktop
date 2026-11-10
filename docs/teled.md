@@ -160,7 +160,7 @@ scripts/teled/build-linux.sh
   | `CCACHE_DIR` | `~/.cache/tdesktop-ccache` | Host ccache directory to mount; empty disables ccache. |
   | `WARNINGS_AS_ERRORS` | `OFF` | `ON` fails the build on compiler warnings, like upstream CI. |
   | `PRODUCTION` | `0` | `1` builds upstream tdesktop for production Telegram in a worktree (`.production`), without teled servers and keys; needs your own `TDESKTOP_API_ID`/`TDESKTOP_API_HASH`. |
-  | `PRODUCTION_REF` | upstream base of this fork | Commit, tag or branch to build with `PRODUCTION=1`. |
+  | `PRODUCTION_REF` | upstream + tracing (commits below the first teled commit) | Commit, tag or branch to build with `PRODUCTION=1`. |
   | `TELED_BUILD_ENV` | `~/.config/teled/build.env` | File with your defaults for these variables, one `NAME=value` per line; variables set in the environment win. |
   | `TDESKTOP_API_ID`, `TDESKTOP_API_HASH` | upstream test credentials | api credentials. |
 
