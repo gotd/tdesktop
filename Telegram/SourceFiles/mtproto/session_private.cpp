@@ -390,6 +390,7 @@ bool SessionPrivate::setState(int state, int ifState) {
 	if (_state == state) {
 		return false;
 	}
+	MTP_WT(Ev("state", _shiftedDcId, { { "from", _state }, { "to", state } }));
 	_state = state;
 	if (state < 0) {
 		_retryTimeout = -state;
@@ -404,6 +405,7 @@ bool SessionPrivate::setState(int state, int ifState) {
 
 void SessionPrivate::resetSession() {
 	MTP_LOG(_shiftedDcId, ("Resetting session!"));
+	MTP_WT(Ev("session.reset", _shiftedDcId));
 	_needSessionReset = false;
 
 	DEBUG_LOG(("MTP Info: creating new session in resetSession."));
@@ -420,6 +422,10 @@ void SessionPrivate::changeSessionId() {
 
 	DEBUG_LOG(("MTP Info: setting server_session: %1").arg(sessionId));
 
+	MTP_WT(Ev("session.new_id", _shiftedDcId, {
+		{ "old", ::Trace::SignedId{ int64(_sessionId) } },
+		{ "new", ::Trace::SignedId{ int64(sessionId) } },
+	}));
 	_sessionId = sessionId;
 	_messagesCounter = 0;
 	_sessionMarkedAsStarted = false;
@@ -1093,6 +1099,12 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	DEBUG_LOG(("Connection Info: Connecting to %1 with %2 test connections."
 		).arg(_shiftedDcId
 		).arg(_testConnections.size()));
+	MTP_WT(Ev("conn.start", _shiftedDcId, {
+		{ "pdc", int(getProtocolDcId()) },
+		{ "tests", int(_testConnections.size()) },
+		{ "proxy", int(_options->proxy.type) },
+		{ "dc_type", int(_currentDcType) },
+	}));
 
 	if (!_startedConnectingAt) {
 		_startedConnectingAt = crl::now();
@@ -1116,6 +1128,7 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 
 void SessionPrivate::restart() {
 	DEBUG_LOG(("MTP Info: restarting Connection"));
+	MTP_WT(Restart(_shiftedDcId, _retryTimeout));
 
 	_waitForReceivedTimer.cancel();
 	_waitForConnectedTimer.cancel();
@@ -1194,6 +1207,7 @@ void SessionPrivate::sendPingByTimer() {
 			- kPingSendAfter;
 		if (mustSendTill < now + 1000) {
 			LOG(("Could not send ping for some seconds, restarting..."));
+			MTP_WT(Reason(_shiftedDcId, "ping_timeout"));
 			return restart();
 		} else {
 			_pingSender.callOnce(mustSendTill - now);
@@ -1216,6 +1230,7 @@ void SessionPrivate::waitReceivedFailed() {
 	Expects(_options != nullptr);
 
 	DEBUG_LOG(("MTP Info: bad connection, _waitForReceived: %1ms").arg(_waitForReceived));
+	MTP_WT(Ev("conn.reason", _shiftedDcId, { { "reason", "recv_timeout" } }));
 	if (_waitForReceived < kMaxReceiveTimeout) {
 		_waitForReceived = std::min(
 			_waitForReceived * 2,
@@ -1238,6 +1253,7 @@ void SessionPrivate::waitReceivedFailed() {
 
 void SessionPrivate::waitConnectedFailed() {
 	DEBUG_LOG(("MTP Info: can't connect in %1ms").arg(_waitForConnected));
+	MTP_WT(Ev("conn.reason", _shiftedDcId, { { "reason", "connect_timeout" } }));
 	auto maxTimeout = kMaxConnectedTimeout;
 	for (const auto &connection : _testConnections) {
 		accumulate_max(maxTimeout, connection.data->fullConnectTimeout());
@@ -1291,10 +1307,12 @@ void SessionPrivate::handleReceived() {
 		auto ints = intsBuffer.constData();
 		if ((intsCount < kMinimalIntsCount) || (intsCount > kMaxMessageLength / kIntSize)) {
 			LOG(("TCP Error: bad message received, len %1").arg(intsCount * kIntSize));
+			MTP_WT(Reason(_shiftedDcId, "bad_packet"));
 			return restart();
 		}
 		if (_keyId != *(uint64*)ints) {
 			LOG(("TCP Error: bad auth_key_id %1 instead of %2 received").arg(_keyId).arg(*(uint64*)ints));
+			MTP_WT(Reason(_shiftedDcId, "bad_key_id"));
 			return restart();
 		}
 
@@ -1332,6 +1350,7 @@ void SessionPrivate::handleReceived() {
 		constexpr auto kMsgKeyShift = 8U;
 		if (ConstTimeIsDifferent(&msgKey, sha256Buffer.data() + kMsgKeyShift, sizeof(msgKey))) {
 			LOG(("TCP Error: bad SHA256 hash after aesDecrypt in message"));
+			MTP_WT(Reason(_shiftedDcId, "bad_msg_key"));
 			return restart();
 		}
 
@@ -1341,6 +1360,7 @@ void SessionPrivate::handleReceived() {
 			|| (paddingSize < kMinPaddingSize)
 			|| (paddingSize > kMaxPaddingSize)) {
 			LOG(("TCP Error: bad msg_len received %1, data size: %2").arg(messageLength).arg(encryptedBytesCount));
+			MTP_WT(Reason(_shiftedDcId, "bad_len"));
 			return restart();
 		}
 
@@ -1364,6 +1384,7 @@ void SessionPrivate::handleReceived() {
 
 		if (session != _sessionId) {
 			LOG(("MTP Error: bad server session received"));
+			MTP_WT(Reason(_shiftedDcId, "bad_session"));
 			return restart();
 		}
 
@@ -1371,6 +1392,7 @@ void SessionPrivate::handleReceived() {
 		const auto isReply = ((msgId & 0x03) == 1);
 		if (!isReply && ((msgId & 0x03) != 3)) {
 			LOG(("MTP Error: bad msg_id %1 in message received").arg(msgId));
+			MTP_WT(Reason(_shiftedDcId, "bad_msg_id"));
 
 			return restart();
 		}
@@ -1386,6 +1408,11 @@ void SessionPrivate::handleReceived() {
 		if (serverSalt != _sessionSalt) {
 			if (!badTime) {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2, updating...").arg(serverSalt).arg(_sessionSalt));
+				MTP_WT(Ev("salt.change", _shiftedDcId, {
+					{ "old", ::Trace::Id{ _sessionSalt } },
+					{ "new", ::Trace::Id{ serverSalt } },
+					{ "accepted", true },
+				}));
 				_sessionSalt = serverSalt;
 
 				if (setState(ConnectedState, ConnectingState)) {
@@ -1393,6 +1420,11 @@ void SessionPrivate::handleReceived() {
 				}
 			} else {
 				DEBUG_LOG(("MTP Info: other salt received... received: %1, my salt: %2").arg(serverSalt).arg(_sessionSalt));
+				MTP_WT(Ev("salt.change", _shiftedDcId, {
+					{ "old", ::Trace::Id{ _sessionSalt } },
+					{ "new", ::Trace::Id{ serverSalt } },
+					{ "accepted", false },
+				}));
 			}
 		} else {
 			serverSalt = 0; // dont pass to handle method, so not to lock in setSalt()
@@ -1443,6 +1475,15 @@ void SessionPrivate::handleReceived() {
 		}
 
 		if (res != HandleResult::Success && res != HandleResult::Ignored) {
+			MTP_WT(Reason(
+				_shiftedDcId,
+				((res == HandleResult::DestroyTemporaryKey)
+					? "destroy_temp_key"
+					: (res == HandleResult::ResetSession)
+					? "reset_session"
+					: (res == HandleResult::ParseError)
+					? "parse_error"
+					: "restart_connection")));
 			if (res == HandleResult::DestroyTemporaryKey) {
 				destroyTemporaryKey();
 			} else if (res == HandleResult::ResetSession) {
@@ -2383,9 +2424,11 @@ void SessionPrivate::onConnected(
 	if (!connection->isConnected()) {
 		LOG(("Connection Error: not connected in onConnected(), "
 			"state: %1").arg(connection->debugState()));
+		MTP_WT(Reason(_shiftedDcId, "not_connected"));
 		return restart();
 	}
 
+	MTP_WT(Ev("conn.up", _shiftedDcId, { { "tag", connection->tag() } }));
 	_waitForConnected = kMinConnectedTimeout;
 	_waitForConnectedTimer.cancel();
 
@@ -2415,6 +2458,8 @@ void SessionPrivate::onConnected(
 void SessionPrivate::onDisconnected(
 		not_null<AbstractConnection*> connection) {
 	removeTestConnection(connection);
+	MTP_WT(Ev("conn.down", _shiftedDcId, { { "tag", connection->tag() } }));
+	MTP_WT(Reason(_shiftedDcId, "disconnected"));
 
 	if (_testConnections.empty()) {
 		destroyAllConnections();
@@ -2492,6 +2537,7 @@ void SessionPrivate::setCurrentKeyId(uint64 newKeyId) {
 
 void SessionPrivate::applyAuthKey(AuthKeyPtr &&encryptionKey) {
 	_encryptionKey = std::move(encryptionKey);
+	MTP_WT(KeySet(_shiftedDcId, _encryptionKey));
 	const auto newKeyId = _encryptionKey ? _encryptionKey->keyId() : 0;
 	if (_keyId) {
 		if (_keyId == newKeyId) {
@@ -2612,6 +2658,14 @@ DcType SessionPrivate::tryAcquireKeyCreation() {
 				: 0
 			).arg(result->temporaryServerSalt
 			).arg(result->persistentServerSalt));
+		MTP_WT(Ev("key.created", _shiftedDcId, {
+			{ "temp", ::Trace::Id{ result->temporaryKey
+				? result->temporaryKey->keyId()
+				: 0 } },
+			{ "perm", ::Trace::Id{ result->persistentKey
+				? result->persistentKey->keyId()
+				: 0 } },
+		}));
 
 		_sessionSalt = result->temporaryServerSalt;
 		result->temporaryKey->setExpiresAt(base::unixtime::now()
@@ -2672,6 +2726,7 @@ void SessionPrivate::authKeyChecked() {
 void SessionPrivate::onError(
 		not_null<AbstractConnection*> connection,
 		qint32 errorCode) {
+	MTP_WT(Reason(_shiftedDcId, "transport_error", errorCode));
 	if (errorCode == -429) {
 		LOG(("Protocol Error: -429 flood code returned!"));
 	} else if (errorCode == -444) {
@@ -2706,6 +2761,9 @@ void SessionPrivate::handleError(int errorCode) {
 }
 
 void SessionPrivate::destroyTemporaryKey() {
+	MTP_WT(Ev("key.destroy_temp", _shiftedDcId, {
+		{ "key", ::Trace::Id{ _encryptionKey ? _encryptionKey->keyId() : 0 } },
+	}));
 	if (_instance->isKeysDestroyer()) {
 		LOG(("MTP Info: -404 error received in destroyer %1, assuming key was destroyed.").arg(_shiftedDcId));
 		_instance->keyWasPossiblyDestroyed(_shiftedDcId);
