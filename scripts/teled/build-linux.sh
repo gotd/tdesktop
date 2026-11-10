@@ -16,8 +16,12 @@
 #   TDESKTOP_API_ID / TDESKTOP_API_HASH
 #                       api credentials; default: upstream test ones
 #                       (-D TDESKTOP_API_TEST=ON), teled accepts any
-#   CCACHE_DIR          host ccache dir to mount (optional)
-#   PACKAGE             1 (default) to create dist/<name>.tar.gz + .sha256
+#   CCACHE_DIR          host ccache dir to mount
+#                       (default: ~/.cache/tdesktop-ccache; set empty to
+#                       build without ccache)
+#   WARNINGS_AS_ERRORS  ON to fail on compiler warnings, as upstream CI does
+#                       (default: OFF; newer GCC warns on upstream code)
+#   PACKAGE            1 (default) to create dist/<name>.tar.gz + .sha256
 #   DIST_NAME           package name (default: teled-<version>-<short sha>)
 set -euo pipefail
 
@@ -27,6 +31,8 @@ cd "$ROOT"
 TELED_SERVER=${TELED_SERVER:-127.0.0.1:10443,[::1]:10443}
 TELED_RSA_KEY_FILE=${TELED_RSA_KEY_FILE:-Telegram/SourceFiles/mtproto/teled/teled_test_public_key.pem}
 BUILD_CONFIG=${BUILD_CONFIG:-Release}
+CCACHE_DIR=${CCACHE_DIR-$HOME/.cache/tdesktop-ccache}
+WARNINGS_AS_ERRORS=${WARNINGS_AS_ERRORS:-OFF}
 IMAGE=${IMAGE:-tdesktop:centos_env}
 BUILD_IMAGE=${BUILD_IMAGE:-auto}
 PACKAGE=${PACKAGE:-1}
@@ -111,7 +117,7 @@ log "config $BUILD_CONFIG, servers '$TELED_SERVER', key $TELED_RSA_KEY_FILE ($fi
 docker run "${docker_args[@]}" "$IMAGE" \
 	"${run_prefix[@]}" /usr/src/tdesktop/$CENTOS_ENV/build.sh \
 	-D "CMAKE_CONFIGURATION_TYPES=$BUILD_CONFIG" \
-	-D CMAKE_COMPILE_WARNING_AS_ERROR=ON \
+	-D "CMAKE_COMPILE_WARNING_AS_ERROR=$WARNINGS_AS_ERRORS" \
 	-D DESKTOP_APP_USE_PACKAGED=OFF \
 	-D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
 	-D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON \

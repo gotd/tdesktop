@@ -157,7 +157,8 @@ scripts/teled/build-linux.sh
   | `TELED_RSA_KEY_FILE` | teled testing key | Public key PEM to embed. |
   | `TELED_SERVER` | `127.0.0.1:10443,[::1]:10443` | Default endpoints. |
   | `BUILD_CONFIG` | `Release` | `Release` or `Debug`. |
-  | `CCACHE_DIR` | unset | Host ccache directory to mount. |
+  | `CCACHE_DIR` | `~/.cache/tdesktop-ccache` | Host ccache directory to mount; empty disables ccache. |
+  | `WARNINGS_AS_ERRORS` | `OFF` | `ON` fails the build on compiler warnings, like upstream CI. |
   | `TDESKTOP_API_ID`, `TDESKTOP_API_HASH` | upstream test credentials | api credentials. |
 
   Extra arguments go to cmake, for example `-D DESKTOP_APP_USE_PACKAGED=OFF`.
