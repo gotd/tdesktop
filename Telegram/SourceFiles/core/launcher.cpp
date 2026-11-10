@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sandbox.h"
 #include "core/version.h"
 #include "base/concurrent_timer.h"
+#include "trace/trace.h"
 #include "base/options.h"
 
 #include <QtCore/QLoggingCategory>
@@ -398,6 +399,9 @@ int Launcher::exec() {
 
 	// Must be started before Platform is started.
 	Logs::start();
+#ifdef TDESKTOP_WIRE_TRACE
+	Trace::Start(cWorkingDir(), arguments());
+#endif // TDESKTOP_WIRE_TRACE
 	base::options::init(cWorkingDir() + "tdata/experimental_options.json");
 
 	// Must be called after options are inited.

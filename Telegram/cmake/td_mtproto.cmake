@@ -50,6 +50,13 @@ PRIVATE
     mtproto/mtproto_proxy_data.h
     mtproto/mtproto_response.cpp
     mtproto/mtproto_response.h
+    trace/trace.cpp
+    trace/trace.h
+    trace/trace_ids.h
+    trace/trace_redact.cpp
+    trace/trace_redact.h
+    trace/trace_writer.cpp
+    trace/trace_writer.h
 )
 
 target_include_directories(td_mtproto
@@ -63,3 +70,22 @@ PUBLIC
 PRIVATE
     desktop-app::external_zlib
 )
+
+# Wire and storage tracing (see Telegram/SourceFiles/trace/trace.cpp).
+# TDESKTOP_WIRE_TRACE compiles the hooks in, TDESKTOP_TRACE_DEFAULT makes
+# them trace without any runtime switch (off: TDESKTOP_TRACE=0 or -notrace).
+option(TDESKTOP_WIRE_TRACE "Compile in wire and storage tracing." ON)
+option(TDESKTOP_TRACE_DEFAULT "Trace by default, unless disabled at runtime." ON)
+if (TDESKTOP_WIRE_TRACE)
+    target_compile_definitions(td_mtproto PUBLIC TDESKTOP_WIRE_TRACE)
+    if (TDESKTOP_TRACE_DEFAULT)
+        target_compile_definitions(td_mtproto PRIVATE TDESKTOP_TRACE_DEFAULT_ON=1)
+    endif()
+    file(SHA256 ${src_loc}/mtproto/scheme/api.tl trace_api_sha256)
+    file(SHA256 ${src_loc}/mtproto/scheme/mtproto.tl trace_mtproto_sha256)
+    target_compile_definitions(td_mtproto
+    PRIVATE
+        TDESKTOP_TRACE_API_SHA256="${trace_api_sha256}"
+        TDESKTOP_TRACE_MTPROTO_SHA256="${trace_mtproto_sha256}"
+    )
+endif()
