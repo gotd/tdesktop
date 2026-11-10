@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/facade.h"
 #include "mtproto/connection_tcp.h"
+#include "mtproto/teled/teled_config.h"
 #include "storage/serialize_common.h"
 
 #include <QtCore/QFile>
@@ -21,48 +22,6 @@ namespace {
 constexpr auto kVersion = 2;
 
 using namespace details;
-
-struct BuiltInDc {
-	int id;
-	const char *ip;
-	int port;
-};
-
-const BuiltInDc kBuiltInDcs[] = {
-	{ 1, "127.0.0.1" , 10443 },
-};
-
-const BuiltInDc kBuiltInDcsIPv6[] = {
-    { 1, " ::1" , 10443 },
-};
-
-const BuiltInDc kBuiltInDcsTest[] = {
-    { 1, "127.0.0.1" , 10443 },
-};
-
-const BuiltInDc kBuiltInDcsIPv6Test[] = {
-    { 1, " ::1" , 10443 },
-};
-
-const char *kTestPublicRSAKeys[] = { "\
------BEGIN RSA PUBLIC KEY-----\n\
-MIIBCgKCAQEAwX3W9oxq8FdwkMOA/HNeeDJOx8pF6fIw4MrtbfsYPhc5yTs0lg6H\n\
-3ia4SmUTnpbJ+NhGxQX2nhDR6911SETBIq1Iz0OUuOPyDVhVhyZzF+vzBukUE75s\n\
-lPy3UzAzAyruOT5iCoX7mCDhRHWh9Rhm2HHVC02LAKM7RYx6u3WyjI4LV1a1Fpla\n\
-D0wTh1ElJQcHkRsCVJzfD2fCSrkO/F2QNuOdEe9uoyIFGZjTX82GJNd/H6DXKB4X\n\
-Q158yJifZBwZohH9q/7IYrTEGUreQyMjeL1CiROwYKSEmHOaDnLWqq4u8KSmjhqN\n\
-eQnhbTFuwG958vSX1zJOqkDkXlue/1XeMQIDAQAB\n\
------END RSA PUBLIC KEY-----" };
-
-const char *kPublicRSAKeys[] = { "\
------BEGIN RSA PUBLIC KEY-----\n\
-MIIBCgKCAQEAwX3W9oxq8FdwkMOA/HNeeDJOx8pF6fIw4MrtbfsYPhc5yTs0lg6H\n\
-3ia4SmUTnpbJ+NhGxQX2nhDR6911SETBIq1Iz0OUuOPyDVhVhyZzF+vzBukUE75s\n\
-lPy3UzAzAyruOT5iCoX7mCDhRHWh9Rhm2HHVC02LAKM7RYx6u3WyjI4LV1a1Fpla\n\
-D0wTh1ElJQcHkRsCVJzfD2fCSrkO/F2QNuOdEe9uoyIFGZjTX82GJNd/H6DXKB4X\n\
-Q158yJifZBwZohH9q/7IYrTEGUreQyMjeL1CiROwYKSEmHOaDnLWqq4u8KSmjhqN\n\
-eQnhbTFuwG958vSX1zJOqkDkXlue/1XeMQIDAQAB\n\
------END RSA PUBLIC KEY-----" };
 
 } // namespace
 
@@ -127,17 +86,17 @@ bool DcOptions::ValidateSecret(bytes::const_span secret) {
 }
 
 void DcOptions::readBuiltInPublicKeys() {
-	const auto builtin = (_environment == Environment::Test)
-		? gsl::make_span(kTestPublicRSAKeys)
-		: gsl::make_span(kPublicRSAKeys);
-	for (const auto key : builtin) {
-		const auto keyBytes = bytes::make_span(key, strlen(key));
+	// teled: same keys for both environments, see teled_config.h.
+	for (const auto &key : teled::PublicKeys()) {
+		const auto keyBytes = bytes::make_span(
+			key.constData(),
+			std::size_t(key.size()));
 		auto parsed = RSAPublicKey(keyBytes);
 		if (parsed.valid()) {
 			_publicKeys.emplace(parsed.fingerprint(), std::move(parsed));
 		} else {
 			LOG(("MTP Error: could not read this public RSA key:"));
-			LOG((key));
+			LOG((QString::fromLatin1(key)));
 		}
 	}
 }
@@ -156,28 +115,16 @@ void DcOptions::constructFromBuiltIn() {
 
 	readBuiltInPublicKeys();
 
-	const auto list = isTestMode()
-		? gsl::make_span(kBuiltInDcsTest)
-		: gsl::make_span(kBuiltInDcs).subspan(0);
-	for (const auto &entry : list) {
-		const auto flags = Flag::f_static | 0;
-		applyOneGuarded(entry.id, flags, entry.ip, entry.port, {});
+	// teled: same endpoints for both environments, see teled_config.h.
+	for (const auto &entry : teled::Endpoints()) {
+		auto flags = Flags(Flag::f_static);
+		if (entry.ipv6) {
+			flags |= Flag::f_ipv6;
+		}
+		applyOneGuarded(entry.dcId, flags, entry.ip, entry.port, {});
 		DEBUG_LOG(("MTP Info: adding built in DC %1 connect option: %2:%3"
-			).arg(entry.id
-			).arg(entry.ip
-			).arg(entry.port));
-	}
-
-	const auto listv6 = isTestMode()
-		? gsl::make_span(kBuiltInDcsIPv6Test)
-		: gsl::make_span(kBuiltInDcsIPv6).subspan(0);
-	for (const auto &entry : listv6) {
-		const auto flags = Flag::f_static | Flag::f_ipv6;
-		applyOneGuarded(entry.id, flags, entry.ip, entry.port, {});
-		DEBUG_LOG(("MTP Info: adding built in DC %1 IPv6 connect option: "
-			"%2:%3"
-			).arg(entry.id
-			).arg(entry.ip
+			).arg(entry.dcId
+			).arg(QString::fromStdString(entry.ip)
 			).arg(entry.port));
 	}
 }
@@ -185,7 +132,7 @@ void DcOptions::constructFromBuiltIn() {
 void DcOptions::processFromList(
 		const QVector<MTPDcOption> &options,
 		bool overwrite) {
-	if (options.empty() || _immutable) {
+	if (options.empty() || _immutable || teled::EndpointsPinned()) {
 		return;
 	}
 
@@ -463,6 +410,12 @@ QByteArray DcOptions::serialize() const {
 }
 
 bool DcOptions::constructFromSerialized(const QByteArray &serialized) {
+	if (teled::EndpointsPinned()) {
+		// teled: ignore stored endpoints, keep the pinned built-in ones.
+		constructFromBuiltIn();
+		return true;
+	}
+
 	QDataStream stream(serialized);
 	stream.setVersion(QDataStream::Qt_5_1);
 

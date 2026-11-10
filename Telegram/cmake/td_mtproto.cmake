@@ -89,3 +89,6 @@ if (TDESKTOP_WIRE_TRACE)
         TDESKTOP_TRACE_MTPROTO_SHA256="${trace_mtproto_sha256}"
     )
 endif()
+
+# gotd/tdesktop fork: teled sources and options.
+include(${CMAKE_CURRENT_LIST_DIR}/teled.cmake)
