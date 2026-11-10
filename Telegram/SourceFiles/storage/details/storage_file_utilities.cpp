@@ -180,6 +180,12 @@ void WriteManager::remove(RemoveEntry &&entry) {
 }
 
 bool WriteManager::writeNow(WriteEntry &&entry) {
+	MTP_WT(Storage(
+		::Trace::StorageOp::Commit,
+		entry.base,
+		nullptr,
+		entry.data.size(),
+		nullptr));
 	const auto path = [&](char postfix) {
 		return this->path(entry, postfix);
 	};
@@ -268,6 +274,17 @@ bool WriteManager::writeOneScheduledNow() {
 }
 
 void WriteManager::removeNow(const RemoveEntry &entry) {
+	for (const auto &file : entry.files) {
+		MTP_WT(Storage(::Trace::StorageOp::Remove, file, nullptr, 0, nullptr));
+	}
+	if (!entry.folder.isEmpty()) {
+		MTP_WT(Storage(
+			::Trace::StorageOp::Remove,
+			entry.folder,
+			nullptr,
+			0,
+			nullptr));
+	}
 	auto failed = 0;
 	for (const auto &file : entry.files) {
 		if (!QFile::remove(file) && QFileInfo::exists(file)) {
@@ -657,16 +674,21 @@ void EncryptedDescriptor::finish() {
 FileWriteDescriptor::FileWriteDescriptor(
 	const FileKey &key,
 	const QString &basePath,
-	bool sync)
-: FileWriteDescriptor(ToFilePart(key), basePath, sync) {
+	bool sync
+	MTP_WT_LOC_DEF)
+: FileWriteDescriptor(ToFilePart(key), basePath, sync MTP_WT_PASS) {
 }
 
 FileWriteDescriptor::FileWriteDescriptor(
 	const QString &name,
 	const QString &basePath,
-	bool sync)
+	bool sync
+	MTP_WT_LOC_DEF)
 : _basePath(basePath)
 , _sync(sync) {
+#ifdef TDESKTOP_WIRE_TRACE
+	_wtLoc = wtLoc;
+#endif // TDESKTOP_WIRE_TRACE
 	init(name);
 }
 
@@ -686,6 +708,12 @@ void FileWriteDescriptor::writeData(const QByteArray &data) {
 	if (!_stream.device()) {
 		return;
 	}
+	MTP_WT(Storage(
+		::Trace::StorageOp::WriteRaw,
+		_base,
+		nullptr,
+		data.size(),
+		&_wtLoc));
 	_stream << data;
 	quint32 len = data.isNull() ? 0xffffffff : data.size();
 	if (QSysInfo::ByteOrder != QSysInfo::BigEndian) {
@@ -699,6 +727,16 @@ void FileWriteDescriptor::writeData(const QByteArray &data) {
 void FileWriteDescriptor::writeEncrypted(
 	EncryptedDescriptor &data,
 	const MTP::AuthKeyPtr &key) {
+#ifdef TDESKTOP_WIRE_TRACE
+	data.finish();
+	MTP_WT(Storage(
+		::Trace::StorageOp::Write,
+		_base,
+		&data.data,
+		data.data.size(),
+		&_wtLoc));
+	const auto wtScope = ::Trace::WriteEncryptedScope();
+#endif // TDESKTOP_WIRE_TRACE
 	writeData(PrepareEncrypted(data, key));
 }
 
@@ -731,8 +769,15 @@ bool FileWriteDescriptor::finish() {
 
 [[nodiscard]] QByteArray PrepareEncrypted(
 		EncryptedDescriptor &data,
-		const MTP::AuthKeyPtr &key) {
+		const MTP::AuthKeyPtr &key
+		MTP_WT_LOC_DEF) {
 	data.finish();
+	MTP_WT(Storage(
+		::Trace::StorageOp::Encrypt,
+		QString(),
+		&data.data,
+		data.data.size(),
+		&wtLoc));
 	QByteArray &toEncrypt(data.data);
 
 	// prepare for encryption
@@ -753,8 +798,10 @@ bool FileWriteDescriptor::finish() {
 bool ReadFile(
 		FileReadDescriptor &result,
 		const QString &name,
-		const QString &basePath) {
+		const QString &basePath
+		MTP_WT_LOC_DEF) {
 	const auto base = basePath + name;
+	MTP_WT(SetCurrentFile(base));
 
 	// detect order of read attempts
 	QString toTry[2];
@@ -856,15 +903,18 @@ bool ReadFile(
 			QFile::remove(toTry[1 - i]);
 		}
 
+		MTP_WT(StorageRead(fname, true, version, result.data.size(), wtLoc));
 		return true;
 	}
+	MTP_WT(StorageRead(base, false, 0, 0, wtLoc));
 	return false;
 }
 
 bool DecryptLocal(
 		EncryptedDescriptor &result,
 		const QByteArray &encrypted,
-		const MTP::AuthKeyPtr &key) {
+		const MTP::AuthKeyPtr &key
+		MTP_WT_LOC_DEF) {
 	if (encrypted.size() <= 16 || (encrypted.size() & 0x0F)) {
 		LOG(("App Error: bad encrypted part size: %1").arg(encrypted.size()));
 		return false;
@@ -878,6 +928,12 @@ bool DecryptLocal(
 	uchar sha1Buffer[20];
 	if (memcmp(hashSha1(decrypted.constData(), decrypted.size(), sha1Buffer), encryptedKey, 16)) {
 		LOG(("App Info: bad decrypt key, data not decrypted - incorrect password?"));
+		MTP_WT(Storage(
+			::Trace::StorageOp::DecryptFail,
+			::Trace::CurrentFile(),
+			nullptr,
+			encrypted.size(),
+			&wtLoc));
 		return false;
 	}
 
@@ -888,6 +944,12 @@ bool DecryptLocal(
 	}
 
 	decrypted.resize(dataLen);
+	MTP_WT(Storage(
+		::Trace::StorageOp::Decrypt,
+		::Trace::CurrentFile(),
+		&decrypted,
+		decrypted.size(),
+		&wtLoc));
 	result.data = decrypted;
 	decrypted = QByteArray();
 
@@ -904,15 +966,16 @@ bool ReadEncryptedFile(
 		FileReadDescriptor &result,
 		const QString &name,
 		const QString &basePath,
-		const MTP::AuthKeyPtr &key) {
-	if (!ReadFile(result, name, basePath)) {
+		const MTP::AuthKeyPtr &key
+		MTP_WT_LOC_DEF) {
+	if (!ReadFile(result, name, basePath MTP_WT_PASS)) {
 		return false;
 	}
 	QByteArray encrypted;
 	result.stream >> encrypted;
 
 	EncryptedDescriptor data;
-	if (!DecryptLocal(data, encrypted, key)) {
+	if (!DecryptLocal(data, encrypted, key MTP_WT_PASS)) {
 		result.stream.setDevice(nullptr);
 		if (result.buffer.isOpen()) result.buffer.close();
 		result.buffer.setBuffer(nullptr);
@@ -940,8 +1003,14 @@ bool ReadEncryptedFile(
 		FileReadDescriptor &result,
 		const FileKey &fkey,
 		const QString &basePath,
-		const MTP::AuthKeyPtr &key) {
-	return ReadEncryptedFile(result, ToFilePart(fkey), basePath, key);
+		const MTP::AuthKeyPtr &key
+		MTP_WT_LOC_DEF) {
+	return ReadEncryptedFile(
+		result,
+		ToFilePart(fkey),
+		basePath,
+		key
+		MTP_WT_PASS);
 }
 
 void ScheduleRemoveFiles(std::vector<QString> paths) {

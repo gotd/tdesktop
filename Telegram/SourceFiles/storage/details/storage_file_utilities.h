@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "storage/storage_account.h"
+#include "trace/trace.h"
 
 #include <QtCore/QBuffer>
 
@@ -70,18 +71,21 @@ struct EncryptedDescriptor final {
 
 [[nodiscard]] QByteArray PrepareEncrypted(
 	EncryptedDescriptor &data,
-	const MTP::AuthKeyPtr &key);
+	const MTP::AuthKeyPtr &key
+	MTP_WT_LOC);
 
 class FileWriteDescriptor final {
 public:
 	FileWriteDescriptor(
 		const FileKey &key,
 		const QString &basePath,
-		bool sync = false);
+		bool sync = false
+		MTP_WT_LOC);
 	FileWriteDescriptor(
 		const QString &name,
 		const QString &basePath,
-		bool sync = false);
+		bool sync = false
+		MTP_WT_LOC);
 	~FileWriteDescriptor();
 
 	void writeData(const QByteArray &data);
@@ -107,30 +111,37 @@ private:
 	int _fullSize = 0;
 	bool _sync = false;
 	bool _result = true;
+#ifdef TDESKTOP_WIRE_TRACE
+	std::source_location _wtLoc;
+#endif // TDESKTOP_WIRE_TRACE
 
 };
 
 bool ReadFile(
 	FileReadDescriptor &result,
 	const QString &name,
-	const QString &basePath);
+	const QString &basePath
+	MTP_WT_LOC);
 
 bool DecryptLocal(
 	EncryptedDescriptor &result,
 	const QByteArray &encrypted,
-	const MTP::AuthKeyPtr &key);
+	const MTP::AuthKeyPtr &key
+	MTP_WT_LOC);
 
 bool ReadEncryptedFile(
 	FileReadDescriptor &result,
 	const QString &name,
 	const QString &basePath,
-	const MTP::AuthKeyPtr &key);
+	const MTP::AuthKeyPtr &key
+	MTP_WT_LOC);
 
 bool ReadEncryptedFile(
 	FileReadDescriptor &result,
 	const FileKey &fkey,
 	const QString &basePath,
-	const MTP::AuthKeyPtr &key);
+	const MTP::AuthKeyPtr &key
+	MTP_WT_LOC);
 
 void ScheduleRemoveFiles(std::vector<QString> paths);
 void ScheduleRemoveFolder(const QString &path);
