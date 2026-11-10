@@ -78,3 +78,8 @@ settings.local.json
 # teled build scripts
 build.sh
 build*.sh
+!/scripts/teled/*.sh
+
+# teled build outputs (scripts/teled/build-linux.sh)
+/.teled/
+/dist/
