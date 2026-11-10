@@ -91,3 +91,30 @@ if (TDESKTOP_WIRE_TRACE)
         TDESKTOP_TRACE_MTPROTO_SHA256="${trace_mtproto_sha256}"
     )
 endif()
+
+# UI and user-action tracing (P14) needs Window::*, Core::* and lib_ui, so it
+# goes into the Telegram target. Lang key names for menu items are generated
+# from the codegen key slots (gen/lang_auto.indices).
+if (TDESKTOP_WIRE_TRACE AND TARGET Telegram)
+    set(trace_lang_names ${CMAKE_CURRENT_BINARY_DIR}/gen/trace_lang_names.cpp)
+    add_custom_command(
+    OUTPUT
+        ${trace_lang_names}
+    COMMAND
+        ${CMAKE_COMMAND}
+        -DIN=${CMAKE_CURRENT_BINARY_DIR}/gen/lang_auto.indices
+        -DOUT=${trace_lang_names}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/trace_lang_names.cmake
+    COMMENT "Generating trace lang names (Telegram)"
+    DEPENDS
+        ${CMAKE_CURRENT_BINARY_DIR}/gen/lang_auto.timestamp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/trace_lang_names.cmake
+    )
+    target_sources(Telegram
+    PRIVATE
+        ${src_loc}/trace/trace_lang_names.h
+        ${src_loc}/trace/trace_ui.cpp
+        ${src_loc}/trace/trace_ui.h
+        ${trace_lang_names}
+    )
+endif()
