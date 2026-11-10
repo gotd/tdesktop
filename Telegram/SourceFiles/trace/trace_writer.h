@@ -95,6 +95,9 @@ private:
 [[nodiscard]] std::string Hex(const void *data, size_t size);
 void AppendJsonString(std::string &to, std::string_view value);
 
+// Creates (truncates) a file readable only by the owner (0600).
+[[nodiscard]] std::FILE *OpenPrivateFile(const std::filesystem::path &path);
+
 // Appends value in fixed notation with a '.' decimal point, whatever the
 // process locale is (printf's %f follows LC_NUMERIC, which Qt sets).
 void AppendFixed(std::string &to, double value, int precision);

@@ -55,6 +55,8 @@ PRIVATE
     trace/trace_ids.h
     trace/trace_redact.cpp
     trace/trace_redact.h
+    trace/trace_ui_core.cpp
+    trace/trace_ui_core.h
     trace/trace_writer.cpp
     trace/trace_writer.h
 )

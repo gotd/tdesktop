@@ -463,4 +463,8 @@ void Writer::writeOne(QueuedEvent &event) {
 	_eventsBytes += line.size();
 }
 
+std::FILE *OpenPrivateFile(const std::filesystem::path &path) {
+	return OpenPrivate(path);
+}
+
 } // namespace Trace::details
