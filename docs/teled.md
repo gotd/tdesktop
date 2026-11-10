@@ -165,6 +165,10 @@ scripts/teled/build-linux.sh
   | `TDESKTOP_API_ID`, `TDESKTOP_API_HASH` | upstream test credentials | api credentials. |
 
   Extra arguments go to cmake, for example `-D DESKTOP_APP_USE_PACKAGED=OFF`.
+- **Desktop app:** `scripts/teled/install-desktop.sh` installs the newest `dist/tdesktop-*.tar.gz` to
+  `~/.local/opt/tdesktop-trace` and adds "Telegram Trace" to the applications menu with an orange icon.
+  It runs with `-workdir ~/.local/share/TelegramTrace`, so it never shares data with an official
+  install, and traces land in `~/.local/share/TelegramTrace/trace`. Rerun it after each build.
 - **Fast rebuilds:** keep the docker image, `out/` (teled) and `.production/out/` (production); the
   script never deletes them, so rebuilds are incremental. Both trees mount at the same container
   path and share `~/.cache/tdesktop-ccache` with `CCACHE_BASEDIR`, so ccache reuses objects across
