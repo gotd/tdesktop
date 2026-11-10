@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "media/player/media_player_instance.h"
 #include "platform/platform_specific.h"
+#include "trace/trace_ui.h"
 
 #include <QAction>
 #include <QShortcut>
@@ -830,6 +831,7 @@ bool Request::handle(FnMut<bool()> handler) {
 }
 
 FnMut<bool()> RequestHandler(std::vector<Command> commands) {
+	MTP_WT_UI(Shortcut(commands, CommandNames()));
 	auto request = Request(std::move(commands));
 	RequestsStream.fire(&request);
 	return std::move(request._handler);

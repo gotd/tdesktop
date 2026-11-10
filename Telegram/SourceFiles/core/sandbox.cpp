@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/update_checker.h"
 #include "core/deadlock_detector.h"
+#include "trace/trace_ui.h"
 #include "base/timer.h"
 #include "base/concurrent_timer.h"
 #include "base/invoke_queued.h"
@@ -791,6 +792,7 @@ bool Sandbox::notify(QObject *receiver, QEvent *e) {
 	}
 
 	const auto wrap = createEventNestingLevel();
+	MTP_WT_UI_SCOPE(wtUi, receiver, e);
 	if (e->type() == QEvent::UpdateRequest) {
 		const auto weak = QPointer<QObject>(receiver);
 		_widgetUpdateRequests.fire({});
