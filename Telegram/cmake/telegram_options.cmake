@@ -122,3 +122,6 @@ endif()
 if (NOT TDESKTOP_CANARY_PUBLIC_CHANNEL STREQUAL "")
     target_compile_definitions(Telegram PRIVATE TDESKTOP_CANARY_PUBLIC_CHANNEL=${TDESKTOP_CANARY_PUBLIC_CHANNEL})
 endif()
+
+# gotd/tdesktop fork: control server.
+include(${CMAKE_CURRENT_LIST_DIR}/control.cmake)
