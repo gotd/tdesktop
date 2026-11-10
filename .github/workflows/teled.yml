@@ -1,0 +1,275 @@
+# gotd/tdesktop fork: build the teled client for Linux and publish a release.
+# See docs/teled.md for the secrets and variables.
+name: teled.
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Build configuration.
+        type: choice
+        options:
+          - Release
+          - Debug
+        default: Release
+      release:
+        description: Publish a GitHub release (dev only).
+        type: boolean
+        default: true
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'changelog.txt'
+      - 'LEGAL'
+      - 'LICENSE'
+      - 'snap/**'
+      - 'Telegram/Resources/uwp/**'
+      - 'Telegram/Resources/winrc/**'
+      - 'Telegram/SourceFiles/platform/win/**'
+      - 'Telegram/SourceFiles/platform/mac/**'
+      - 'Telegram/Telegram/**'
+      - 'Telegram/configure.bat'
+      - 'Telegram/Telegram.plist'
+  schedule:
+    # Weekly rebuild, picks up a changed TELED_RSA_PUBLIC_KEY.
+    - cron: '0 5 * * 1'
+
+permissions:
+  contents: write # GitHub release.
+  packages: write # ghcr.io image cache.
+
+concurrency:
+  group: teled-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      BUILD_CONFIG: ${{ inputs.config || 'Release' }}
+      PUBLISH: ${{ github.ref_name == 'dev' && (github.event_name != 'workflow_dispatch' || inputs.release) }}
+      TELED_SERVER: ${{ vars.TELED_SERVER || '127.0.0.1:10443,[::1]:10443' }}
+      LOCAL_IMAGE: tdesktop:centos_env
+
+    steps:
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Free up some disk space.
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
+        with:
+          tool-cache: true
+
+      - name: Names.
+        id: names
+        run: |
+          repo=${GITHUB_REPOSITORY,,}
+          image="ghcr.io/$repo/centos_env:${{ hashFiles('Telegram/build/docker/centos_env/**') }}"
+          version=$(awk '$1 == "AppVersionStr" { print $2 }' Telegram/build/version)
+          name="teled-$version-$(git rev-parse --short=10 HEAD)"
+          {
+            echo "image=$image"
+            echo "version=$version"
+            echo "name=$name"
+          } >> "$GITHUB_OUTPUT"
+          echo "Image $image, release $name"
+
+      - name: Pull the docker image.
+        id: pull
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if docker pull "$IMAGE"; then
+            docker tag "$IMAGE" "$LOCAL_IMAGE"
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: First set up.
+        run: |
+          curl -sSL https://github.com/ccache/ccache/releases/download/v4.13.6/ccache-4.13.6-linux-x86_64-glibc.tar.xz \
+          | sudo tar xJ -C /usr/local/bin --strip-components=1 ccache-4.13.6-linux-x86_64-glibc/ccache
+          echo "CCACHE_DIR=$RUNNER_TEMP/.tdesktop-cache" >> "$GITHUB_ENV"
+
+      - name: Generate the Dockerfile.
+        if: steps.pull.outputs.hit != 'true'
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          cd Telegram/build/docker/centos_env
+          poetry install
+          DOCKERFILE=$(DEBUG='' LTO='' poetry run gen_dockerfile)
+          echo "$DOCKERFILE" > Dockerfile
+          rm -rf __pycache__
+
+      - name: Set up Docker Buildx.
+        id: setup-buildx
+        if: steps.pull.outputs.hit != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Libraries cache.
+        id: cache-libs
+        if: steps.pull.outputs.hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/.buildx-cache
+            ${{ runner.temp }}/.mount-cache
+          key: ${{ runner.OS }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
+          restore-keys: ${{ runner.OS }}-libs-
+
+      - name: Restore Docker cache mounts.
+        if: steps.pull.outputs.hit != 'true'
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723
+        with:
+          builder: ${{ steps.setup-buildx.outputs.name }}
+          cache-dir: ${{ runner.temp }}/.mount-cache
+          dockerfile: Telegram/build/docker/centos_env/Dockerfile
+          skip-extraction: ${{ steps.cache-libs.outputs.cache-hit }}
+
+      - name: Libraries.
+        if: steps.pull.outputs.hit != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: Telegram/build/docker/centos_env
+          load: true
+          tags: |
+            ${{ env.LOCAL_IMAGE }}
+            ${{ steps.names.outputs.image }}
+          cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
+          cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
+
+      - name: Move cache.
+        if: steps.pull.outputs.hit != 'true'
+        run: |
+          rm -rf "$RUNNER_TEMP/.buildx-cache"
+          mv "$RUNNER_TEMP"/.buildx-cache{-new,}
+
+      - name: Push the docker image.
+        if: steps.pull.outputs.hit != 'true'
+        # Only a cache for the next runs, the build does not need it.
+        continue-on-error: true
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+        run: docker push "$IMAGE"
+
+      - name: teled public key.
+        id: key
+        env:
+          KEY_SECRET: ${{ secrets.TELED_RSA_PUBLIC_KEY }}
+          KEY_VAR: ${{ vars.TELED_RSA_PUBLIC_KEY }}
+          KEY_URL: ${{ vars.TELED_RSA_PUBLIC_KEY_URL }}
+        run: |
+          mkdir -p .teled
+          key=.teled/rsa_public_key.pem
+          if [ -n "$KEY_SECRET" ]; then
+            printf '%s\n' "$KEY_SECRET" > "$key"
+            source="secret TELED_RSA_PUBLIC_KEY"
+          elif [ -n "$KEY_VAR" ]; then
+            printf '%s\n' "$KEY_VAR" > "$key"
+            source="variable TELED_RSA_PUBLIC_KEY"
+          elif [ -n "$KEY_URL" ]; then
+            curl -fsSL "$KEY_URL" -o "$key"
+            source="$KEY_URL"
+          else
+            cp Telegram/SourceFiles/mtproto/teled/teled_test_public_key.pem "$key"
+            source="teled testing key"
+          fi
+          fingerprints=$(python3 -I scripts/teled/rsa_fingerprint.py "$key")
+          echo "Key from $source: $fingerprints"
+          {
+            echo "source=$source"
+            echo "fingerprints=$(echo "$fingerprints" | tr '\n' ' ')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore Telegram Desktop cache.
+        id: cache-tdesktop
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.OS }}-teled-${{ env.BUILD_CONFIG }}-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-teled-${{ env.BUILD_CONFIG }}-
+
+      - name: Telegram Desktop build.
+        env:
+          BUILD_IMAGE: never
+          IMAGE: ${{ env.LOCAL_IMAGE }}
+          TELED_RSA_KEY_FILE: .teled/rsa_public_key.pem
+          DIST_NAME: ${{ steps.names.outputs.name }}
+          TDESKTOP_API_ID: ${{ vars.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ vars.TDESKTOP_API_HASH }}
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache -z
+          scripts/teled/build-linux.sh
+
+      - name: Count ccache misses.
+        id: ccache-stats
+        run: |
+          MISSES=$(ccache --print-stats | sed -n 's/^cache_miss\t//p' | head -1)
+          case "$MISSES" in (*[!0-9]*|'') MISSES=0;; esac
+          echo "misses=$MISSES" >> "$GITHUB_OUTPUT"
+          echo "ccache misses this run: $MISSES"
+
+      - name: Trim Telegram Desktop cache.
+        if: github.ref_name == 'dev' && fromJSON(steps.ccache-stats.outputs.misses) > 300
+        run: ccache --evict-older-than 1d
+
+      - name: Save Telegram Desktop cache.
+        if: github.ref_name == 'dev' && fromJSON(steps.ccache-stats.outputs.misses) > 300
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache-tdesktop.outputs.cache-primary-key }}
+
+      - name: Upload artifact.
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.names.outputs.name }}
+          path: |
+            dist/${{ steps.names.outputs.name }}.tar.gz
+            dist/${{ steps.names.outputs.name }}.tar.gz.sha256
+          retention-days: 14
+
+      - name: Publish release.
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.names.outputs.name }}
+          VERSION: ${{ steps.names.outputs.version }}
+          KEY_SOURCE: ${{ steps.key.outputs.source }}
+          FINGERPRINTS: ${{ steps.key.outputs.fingerprints }}
+        run: |
+          files=("dist/$TAG.tar.gz" "dist/$TAG.tar.gz.sha256")
+          {
+            echo "Telegram Desktop $VERSION for [teled](https://github.com/gotd/teled), commit $GITHUB_SHA ($BUILD_CONFIG)."
+            echo
+            echo "- Default servers: \`$TELED_SERVER\`"
+            echo "- RSA key: $KEY_SOURCE, fingerprint(s) \`$FINGERPRINTS\`"
+            echo "- Override at runtime with \`TDESKTOP_TELED_SERVER\`, \`TDESKTOP_TELED_RSA_KEY\` or \`teled.json\`, see [docs/teled.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/teled.md)."
+            echo
+            echo '```'
+            cat "dist/$TAG/BUILDINFO"
+            echo
+            cat "dist/$TAG.tar.gz.sha256"
+            echo '```'
+          } > "$RUNNER_TEMP/notes.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${files[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              --latest
+          fi
