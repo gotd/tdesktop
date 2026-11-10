@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mtproto/mtp_instance.h"
+#include "trace/trace.h"
 
 #include "mtproto/details/mtproto_dcenter.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
@@ -677,6 +678,7 @@ void Instance::Private::cancel(mtpRequestId requestId) {
 			_requestMap.erase(it);
 		}
 	}
+	MTP_WT(RequestCancel(requestId, msgId));
 	unregisterRequest(requestId);
 	for (auto &[dcId, waiters] : _authWaiters) {
 		waiters.erase(ranges::remove(waiters, requestId), end(waiters));
@@ -936,6 +938,11 @@ void Instance::Private::configLoadDone(const MTPConfig &result) {
 
 	const auto &data = result.c_config();
 	_config->apply(data);
+	MTP_WT(Ev("config.loaded", 0, {
+		{ "dcs", int(data.vdc_options().v.size()) },
+		{ "this_dc", data.vthis_dc().v },
+		{ "date", data.vdate().v },
+	}));
 
 	const auto lang = qs(data.vsuggested_lang_code().value_or_empty());
 	Lang::CurrentCloudManager().setSuggestedLanguage(lang);
@@ -1038,6 +1045,14 @@ void Instance::Private::sendRequest(
 
 	request->lastSentTime = crl::now();
 	request->needsLayer = needsLayer;
+	MTP_WT(RequestNew(
+		requestId,
+		request,
+		realShiftedDcId,
+		signedDcId,
+		msCanWait,
+		afterRequestId,
+		needsLayer));
 
 	if (afterRequestId) {
 		request->after = getRequest(afterRequestId);
@@ -1153,6 +1168,7 @@ bool Instance::Private::hasCallback(mtpRequestId requestId) const {
 }
 
 void Instance::Private::processCallback(const Response &response) {
+	MTP_WT(RequestDone(response));
 	const auto requestId = response.requestId;
 	ResponseHandler handler;
 	{
@@ -1539,6 +1555,10 @@ bool Instance::Private::onErrorDefault(
 		registerRequest(
 			requestId,
 			(dcWithShift < 0) ? -newdcWithShift : newdcWithShift);
+		MTP_WT(Ev("req.migrate", newdcWithShift, {
+			{ "req", requestId },
+			{ "from", dcWithShift },
+		}));
 		session->sendPrepared(request);
 		return true;
 	} else if (type == u"MSG_WAIT_TIMEOUT"_q || type == u"MSG_WAIT_FAILED"_q) {

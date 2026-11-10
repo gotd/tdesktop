@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_response.h"
 #include "mtproto/mtp_instance.h"
 #include "mtproto/facade.h"
+#include "trace/trace.h"
 
 namespace MTP {
 
@@ -180,6 +181,9 @@ class Sender {
 		void registerRequest(mtpRequestId requestId) {
 			_sender->senderRequestRegister(requestId);
 		}
+#ifdef TDESKTOP_WIRE_TRACE
+		std::source_location _wtLoc;
+#endif // TDESKTOP_WIRE_TRACE
 
 	private:
 		not_null<Sender*> _sender;
@@ -210,9 +214,15 @@ public:
 	class SpecificRequestBuilder : public RequestBuilder {
 	private:
 		friend class Sender;
-		SpecificRequestBuilder(not_null<Sender*> sender, Request &&request) noexcept
+		SpecificRequestBuilder(
+			not_null<Sender*> sender,
+			Request &&request
+			MTP_WT_LOC_DEF) noexcept
 		: RequestBuilder(sender)
 		, _request(std::move(request)) {
+#ifdef TDESKTOP_WIRE_TRACE
+			_wtLoc = wtLoc;
+#endif // TDESKTOP_WIRE_TRACE
 		}
 
 	public:
@@ -309,6 +319,7 @@ public:
 				takeCanWait(),
 				takeAfter(),
 				takeOverrideRequestId());
+			MTP_WT(RequestCaller(id, _wtLoc));
 			registerRequest(id);
 			return id;
 		}
@@ -341,7 +352,9 @@ public:
 		typename Request,
 		typename = std::enable_if_t<!std::is_reference_v<Request>>,
 		typename = typename Request::Unboxed>
-	[[nodiscard]] SpecificRequestBuilder<Request> request(Request &&request) noexcept;
+	[[nodiscard]] SpecificRequestBuilder<Request> request(
+		Request &&request
+		MTP_WT_LOC) noexcept;
 
 	[[nodiscard]] SentRequestWrap request(mtpRequestId requestId) noexcept;
 
@@ -466,8 +479,13 @@ private:
 };
 
 template <typename Request, typename, typename>
-Sender::SpecificRequestBuilder<Request> Sender::request(Request &&request) noexcept {
-	return SpecificRequestBuilder<Request>(this, std::move(request));
+Sender::SpecificRequestBuilder<Request> Sender::request(
+		Request &&request
+		MTP_WT_LOC_DEF) noexcept {
+	return SpecificRequestBuilder<Request>(
+		this,
+		std::move(request)
+		MTP_WT_PASS);
 }
 
 inline Sender::SentRequestWrap Sender::request(mtpRequestId requestId) noexcept {

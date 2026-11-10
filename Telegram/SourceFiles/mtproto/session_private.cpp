@@ -479,6 +479,12 @@ mtpMsgId SessionPrivate::prepareToSend(
 	request.setSeqNo(nextRequestSeqNumber(request.needAck()));
 	if (request->requestId) {
 		MTP_LOG(_shiftedDcId, ("[r%1] msg_id 0 -> %2").arg(request->requestId).arg(currentLastId));
+		MTP_WT(RequestMsg(
+			_shiftedDcId,
+			request->requestId,
+			0,
+			currentLastId,
+			uint32((*request)[SerializedRequest::kSeqNoPosition])));
 	}
 	return currentLastId;
 }
@@ -503,6 +509,12 @@ mtpMsgId SessionPrivate::replaceMsgId(SerializedRequest &request, mtpMsgId newId
 		).arg(request->requestId
 		).arg(oldMsgId
 		).arg(newId));
+	MTP_WT(RequestMsg(
+		_shiftedDcId,
+		request->requestId,
+		oldMsgId,
+		newId,
+		uint32((*request)[SerializedRequest::kSeqNoPosition])));
 
 	const auto i = _resendingIds.find(oldMsgId);
 	if (i != _resendingIds.end()) {
@@ -2392,6 +2404,7 @@ void SessionPrivate::resend(mtpMsgId msgId, crl::time msCanWait) {
 	request->lastSentTime = crl::now();
 	request->forceSendInContainer = true;
 	_resendingIds.emplace(msgId, request->requestId);
+	MTP_WT(RequestResend(_shiftedDcId, request->requestId, msgId, "resend"));
 	{
 		QWriteLocker locker(_sessionData->toSendMutex());
 		_sessionData->toSendMap().emplace(request->requestId, request);
@@ -2411,6 +2424,7 @@ void SessionPrivate::resendAll() {
 			request->lastSentTime = now;
 			request->forceSendInContainer = true;
 			_resendingIds.emplace(msgId, requestId);
+			MTP_WT(RequestResend(_shiftedDcId, requestId, msgId, "resend_all"));
 			toSend.emplace(requestId, std::move(request));
 		}
 	}

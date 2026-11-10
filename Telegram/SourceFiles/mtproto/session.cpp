@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mtproto/session.h"
+#include "trace/trace.h"
 
 #include "mtproto/details/mtproto_dcenter.h"
 #include "mtproto/session_private.h"
@@ -564,6 +565,7 @@ void Session::tryToReceive() {
 		const auto instance = QPointer<Instance>(_instance);
 		const auto main = (_shiftedDcId == BareDcId(_shiftedDcId));
 		for (const auto &message : messages) {
+			MTP_WT_SCOPE(wtCause, message);
 			if (message.requestId) {
 				instance->processCallback(message);
 			} else if (main) {
