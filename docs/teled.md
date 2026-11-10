@@ -165,6 +165,10 @@ scripts/teled/build-linux.sh
   | `TDESKTOP_API_ID`, `TDESKTOP_API_HASH` | upstream test credentials | api credentials. |
 
   Extra arguments go to cmake, for example `-D DESKTOP_APP_USE_PACKAGED=OFF`.
+- **Fast rebuilds:** keep the docker image, `out/` (teled) and `.production/out/` (production); the
+  script never deletes them, so rebuilds are incremental. Both trees mount at the same container
+  path and share `~/.cache/tdesktop-ccache` with `CCACHE_BASEDIR`, so ccache reuses objects across
+  them. Keep api credentials in `~/.config/teled/build.env` so every build uses the same values.
 - **Fixed flags:** the script always passes `-D DESKTOP_APP_DISABLE_AUTOUPDATE=ON` and
   `-D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON`, so the fork never updates itself to official Telegram
   and never sends crash reports to Telegram.

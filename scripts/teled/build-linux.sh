@@ -176,7 +176,8 @@ if [ -n "${CCACHE_DIR:-}" ]; then
 	mkdir -p "$CCACHE_DIR"
 	docker_args+=(
 		-v "$CCACHE_DIR:/var/cache/ccache"
-		-e "CCACHE_SLOPPINESS=pch_defines,time_macros"
+		-e "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
+		-e CCACHE_BASEDIR=/usr/src/tdesktop
 	)
 	run_prefix=(env -u CCACHE_DISABLE)
 fi
