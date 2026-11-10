@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstring>
 #include <utility>
@@ -132,6 +133,21 @@ std::string Hex(const void *data, size_t size) {
 		result.push_back(kDigits[bytes[i] & 0x0F]);
 	}
 	return result;
+}
+
+void AppendFixed(std::string &to, double value, int precision) {
+	char buffer[64];
+	const auto result = std::to_chars(
+		buffer,
+		buffer + sizeof(buffer),
+		value,
+		std::chars_format::fixed,
+		precision);
+	if (result.ec != std::errc()) {
+		to += '0';
+		return;
+	}
+	to.append(buffer, result.ptr);
 }
 
 void AppendJsonString(std::string &to, std::string_view value) {
@@ -400,9 +416,8 @@ void Writer::writeOne(QueuedEvent &event) {
 	line.reserve(event.fields.size() + 160);
 	line += "{\"seq\":";
 	AppendNumber(line, event.seq);
-	char t[32];
-	const auto tSize = std::snprintf(t, sizeof(t), ",\"t\":%.6f", event.t);
-	line.append(t, tSize);
+	line += ",\"t\":";
+	AppendFixed(line, event.t, 6);
 	line += ",\"th\":";
 	AppendJsonString(line, event.thread);
 	line += event.fields;

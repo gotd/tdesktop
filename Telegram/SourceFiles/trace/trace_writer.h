@@ -95,4 +95,8 @@ private:
 [[nodiscard]] std::string Hex(const void *data, size_t size);
 void AppendJsonString(std::string &to, std::string_view value);
 
+// Appends value in fixed notation with a '.' decimal point, whatever the
+// process locale is (printf's %f follows LC_NUMERIC, which Qt sets).
+void AppendFixed(std::string &to, double value, int precision);
+
 } // namespace Trace::details

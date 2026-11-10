@@ -219,9 +219,7 @@ public:
 	}
 	Fields &dbl(const char *name, double value) {
 		key(name);
-		char buffer[64];
-		const auto size = std::snprintf(buffer, sizeof(buffer), "%.3f", value);
-		_data.append(buffer, size);
+		details::AppendFixed(_data, value, 3);
 		return *this;
 	}
 	Fields &type(const char *name, uint32_t value) {
