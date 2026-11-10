@@ -32,7 +32,8 @@
 #   PRODUCTION_DIR      git worktree for the production source
 #                       (default: .production in this repo)
 #   TELED_BUILD_ENV     file with defaults for the variables above, one
-#                       NAME=value per line, # comments allowed; variables
+#                       NAME=value per line, # comments ignored, last line
+#                       for a name wins; variables
 #                       already set in the environment win
 #                       (default: ~/.config/teled/build.env, if it exists)
 set -euo pipefail
@@ -42,6 +43,7 @@ cd "$ROOT"
 
 TELED_BUILD_ENV=${TELED_BUILD_ENV:-$HOME/.config/teled/build.env}
 if [ -f "$TELED_BUILD_ENV" ]; then
+	declare -A from_file=()
 	while IFS= read -r line || [ -n "$line" ]; do
 		line=${line%%#*}
 		line=$(echo "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
@@ -52,8 +54,11 @@ if [ -f "$TELED_BUILD_ENV" ]; then
 			echo "teled-build: $TELED_BUILD_ENV: bad line '$line'" >&2
 			exit 2
 		fi
-		if [ -z "${!name+x}" ]; then
+		# Variables from the real environment win; within the file the
+		# last line for a name wins.
+		if [ -z "${!name+x}" ] || [ -n "${from_file[$name]:-}" ]; then
 			export "$name=$value"
+			from_file[$name]=1
 		fi
 	done < "$TELED_BUILD_ENV"
 	echo "teled-build: defaults from $TELED_BUILD_ENV" >&2
